@@ -155,22 +155,87 @@ CREATE TABLE IF NOT EXISTS t_mgis_unit_doc (
   PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='资质单位基础档案';
 
+-- 用密成果提供使用逐级核准：核准单、签署链、申请图幅行、领用清单行（口径见 sql/mgis_use.sql）
 CREATE TABLE IF NOT EXISTS t_mgis_use_bill (
   id bigint NOT NULL COMMENT '主键',
-  bill_no varchar(64) DEFAULT NULL COMMENT '成果提供使用核准单号',
-  node_no int DEFAULT NULL COMMENT '当前所在层 0..3',
-  sign_mode int DEFAULT NULL COMMENT '同层核准方式 0任一人 1两名点齐',
-  need_count int DEFAULT NULL COMMENT '本层应签人数',
-  sign_count int DEFAULT NULL COMMENT '本层已签人数',
-  status int DEFAULT NULL COMMENT '报批情形 0在核 1已核讫 2已打回',
-  del_flag int DEFAULT '0' COMMENT '删除标记 0正常 1删除',
+  bill_no varchar(64) NOT NULL COMMENT '核准单号(系统给号,YM打头)',
+  applicant_unit varchar(128) NOT NULL COMMENT '申请单位(受理五样之一)',
+  purpose varchar(500) NOT NULL COMMENT '用途(受理五样之一)',
+  secret_level varchar(32) NOT NULL COMMENT '密级(受理五样之一)',
+  map_year int NOT NULL COMMENT '出图年份(受理五样之一)',
+  station varchar(16) NOT NULL COMMENT '眼下停在哪一阶 WINDOW窗口受理 CITY市局核用途 PROVINCE省厅会签 ISSUE窗口放成果',
+  round_no int NOT NULL DEFAULT 1 COMMENT '第几轮(省厅发回市局一轮加一)',
+  need_count int NOT NULL DEFAULT 1 COMMENT '本阶应签人数(窗口、市局1;省厅2;放成果1)',
+  sign_count int NOT NULL DEFAULT 0 COMMENT '本阶已签人数(件自己记,不许手填)',
+  status int NOT NULL DEFAULT 0 COMMENT '情形 0在核 1已核准 2已否决(否决即定死)',
+  approved_doc_no varchar(64) DEFAULT NULL COMMENT '批准文号(省厅两签齐时系统给号)',
+  approved_by varchar(64) DEFAULT NULL COMMENT '核准定稿经办',
+  approved_at datetime DEFAULT NULL COMMENT '核准时辰(系统写死,以秒计)',
+  checklist_no varchar(64) DEFAULT NULL COMMENT '领用清单号(一键生成时给号)',
+  checklist_gen int NOT NULL DEFAULT 0 COMMENT '清单已生成 0否 1是',
+  issued_by varchar(64) DEFAULT NULL COMMENT '放成果经办',
+  issued_at datetime DEFAULT NULL COMMENT '放成果时辰(系统写死,以秒计)',
   create_by varchar(64) DEFAULT NULL COMMENT '创建者',
   create_time datetime DEFAULT NULL COMMENT '创建时间',
   update_by varchar(64) DEFAULT NULL COMMENT '更新者',
   update_time datetime DEFAULT NULL COMMENT '更新时间',
   remark varchar(500) DEFAULT NULL COMMENT '备注',
-  PRIMARY KEY (id)
-) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='成果提供使用逐级核准单';
+  del_flag int NOT NULL DEFAULT 0 COMMENT '删除标记 0正常 1删除(服务层不辟删门)',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_use_bill_no (bill_no),
+  KEY idx_use_bill_station (station),
+  KEY idx_use_bill_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='用密成果提供使用逐级核准单';
+
+CREATE TABLE IF NOT EXISTS t_mgis_use_entry (
+  id bigint NOT NULL COMMENT '主键',
+  bill_id bigint NOT NULL COMMENT '核准单主键',
+  seq int NOT NULL COMMENT '链上序号(自1连排)',
+  round_no int NOT NULL DEFAULT 1 COMMENT '第几轮(发回重审一轮加一)',
+  station varchar(16) NOT NULL COMMENT '签署阶 WINDOW/CITY/PROVINCE/ISSUE',
+  action varchar(16) NOT NULL COMMENT '签署动作 ACCEPT受理 VERIFY核用途 CONFIRM核准会签 REJECT驳回 VETO否决 SEND_BACK发回 ISSUE放成果',
+  sign_role varchar(24) DEFAULT NULL COMMENT '省厅会签分工 SECRET密级脱密 PURPOSE用途(其余阶为空)',
+  payload text COMMENT '这一笔写的话(JSON,签署即定)',
+  penned_by varchar(64) NOT NULL COMMENT '签署人(签署那一下系统写死,替签不作数)',
+  penned_at datetime NOT NULL COMMENT '签署时辰(系统写死,以秒计)',
+  prev_hash char(64) NOT NULL COMMENT '前一笔哈希(头一笔为64个0)',
+  hash char(64) NOT NULL COMMENT '本笔哈希',
+  create_by varchar(64) DEFAULT NULL COMMENT '创建者',
+  create_time datetime DEFAULT NULL COMMENT '创建时间',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_use_entry_seq (bill_id, seq),
+  UNIQUE KEY uk_use_entry_point (bill_id, station, action, sign_role, round_no),
+  KEY idx_use_entry_bill (bill_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='用密核准签署链(只增不改)';
+
+CREATE TABLE IF NOT EXISTS t_mgis_use_sheet (
+  id bigint NOT NULL COMMENT '主键',
+  bill_id bigint NOT NULL COMMENT '核准单主键',
+  line_no int NOT NULL COMMENT '册内行次(自1连排)',
+  sheet_code varchar(64) NOT NULL COMMENT '图幅代号',
+  create_by varchar(64) DEFAULT NULL COMMENT '创建者',
+  create_time datetime DEFAULT NULL COMMENT '创建时间',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_use_sheet_line (bill_id, line_no),
+  UNIQUE KEY uk_use_sheet_code (bill_id, sheet_code),
+  KEY idx_use_sheet_bill (bill_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='用密核准申请图幅行(受理即锁)';
+
+CREATE TABLE IF NOT EXISTS t_mgis_use_checklist (
+  id bigint NOT NULL COMMENT '主键',
+  bill_id bigint NOT NULL COMMENT '核准单主键',
+  checklist_no varchar(64) NOT NULL COMMENT '领用清单号(同单一个号)',
+  line_no int NOT NULL COMMENT '清单行次(照申请册内行次)',
+  sheet_code varchar(64) NOT NULL COMMENT '图幅代号(核准件带过)',
+  secret_level varchar(32) NOT NULL COMMENT '密级(核准件带过)',
+  map_year int NOT NULL COMMENT '出图年份(核准件带过)',
+  approved_doc_no varchar(64) NOT NULL COMMENT '批准文号(核准件带过)',
+  create_by varchar(64) DEFAULT NULL COMMENT '创建者',
+  create_time datetime DEFAULT NULL COMMENT '创建时间',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_use_checklist_line (bill_id, line_no),
+  KEY idx_use_checklist_bill (bill_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='用密成果领用清单行(核准件一键带出)';
 
 -- 初始档案数据（在册 / 注销两种状态各一条）
 -- t_mgis_unit_doc 两条种子档案：id=0 在册、id=1 已注销（在册与注销的联动样例）。
