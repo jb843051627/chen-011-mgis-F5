@@ -172,6 +172,104 @@ CREATE TABLE IF NOT EXISTS t_mgis_use_bill (
   PRIMARY KEY (id)
 ) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='成果提供使用逐级核准单';
 
+-- 用密成果领用申请（五表，建表脚本另见 sql/mgis_use_order.sql；旧 t_mgis_use_bill 脚手架封存不动）
+CREATE TABLE IF NOT EXISTS t_mgis_use_order (
+  id bigint NOT NULL COMMENT '主键',
+  order_no varchar(64) NOT NULL COMMENT '申请单号(YM打头,系统给号)',
+  applicant varchar(128) NOT NULL COMMENT '申请单位',
+  purpose varchar(500) NOT NULL COMMENT '用途',
+  stage varchar(16) NOT NULL COMMENT '眼下停在哪一阶 WINDOW窗口受理 CITY市局核验 PROVINCE省厅核准 ISSUE窗口放成果 DONE办结',
+  round_no int NOT NULL DEFAULT 1 COMMENT '第几轮(省厅发回市局一轮加一)',
+  status int NOT NULL DEFAULT 0 COMMENT '状态 0在办 1已核准 2已否决 3已办结',
+  sheet_count int NOT NULL DEFAULT 0 COMMENT '图幅行数(受理落账;与行表当场重算两处对账)',
+  province_sign_count int NOT NULL DEFAULT 0 COMMENT '省厅已签人数(落账;与链上最新一轮两岗笔数两处对账)',
+  approve_no varchar(64) DEFAULT NULL COMMENT '批准文号(YZ打头,省厅两签齐核准那一下系统给)',
+  approved_by varchar(64) DEFAULT NULL COMMENT '核准时最后落签经办(快照)',
+  approved_at datetime DEFAULT NULL COMMENT '核准时辰(快照)',
+  issued_by varchar(64) DEFAULT NULL COMMENT '放成果经办(快照)',
+  issued_at datetime DEFAULT NULL COMMENT '放成果时辰(快照)',
+  create_by varchar(64) DEFAULT NULL COMMENT '创建者',
+  create_time datetime DEFAULT NULL COMMENT '创建时间',
+  update_by varchar(64) DEFAULT NULL COMMENT '更新者',
+  update_time datetime DEFAULT NULL COMMENT '更新时间',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_use_order_no (order_no),
+  KEY idx_use_order_applicant (applicant),
+  KEY idx_use_order_stage (stage),
+  KEY idx_use_order_status (status)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='用密成果领用申请单';
+
+CREATE TABLE IF NOT EXISTS t_mgis_use_sheet (
+  id bigint NOT NULL COMMENT '主键',
+  order_id bigint NOT NULL COMMENT '申请单主键',
+  row_no int NOT NULL COMMENT '册内行次(自1连排)',
+  sheet_code varchar(64) NOT NULL COMMENT '图幅代号',
+  secret_level varchar(16) NOT NULL COMMENT '密级 TOP_SECRET绝密 SECRET机密 CONFIDENTIAL秘密 INTERNAL内部',
+  map_year int NOT NULL COMMENT '图上出图年份(四位整数)',
+  create_by varchar(64) DEFAULT NULL COMMENT '创建者',
+  create_time datetime DEFAULT NULL COMMENT '创建时间',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_use_sheet_row (order_id, row_no),
+  UNIQUE KEY uk_use_sheet_code (order_id, sheet_code),
+  KEY idx_use_sheet_order (order_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='用密成果申请图幅行(只增不改)';
+
+CREATE TABLE IF NOT EXISTS t_mgis_use_entry (
+  id bigint NOT NULL COMMENT '主键',
+  order_id bigint NOT NULL COMMENT '申请单主键',
+  seq int NOT NULL COMMENT '链上序号(自1连排)',
+  round_no int NOT NULL DEFAULT 1 COMMENT '第几轮(省厅发回一轮加一)',
+  stage varchar(16) NOT NULL COMMENT '落笔阶 WINDOW/CITY/PROVINCE/ISSUE',
+  action varchar(20) NOT NULL COMMENT '落笔动作 ACCEPT/CITY_PASS/CITY_REJECT/SIGN_SECRECY/SIGN_PURPOSE/PROVINCE_REJECT/RETURN/ISSUE',
+  payload text DEFAULT NULL COMMENT '这一笔写的话(JSON,落笔即定)',
+  penned_by varchar(64) NOT NULL COMMENT '经办(落笔那一下系统写死,替签不作数)',
+  penned_at datetime NOT NULL COMMENT '落笔时辰(系统写死,以秒计)',
+  prev_hash char(64) NOT NULL COMMENT '前一笔哈希(头一笔为64个0)',
+  hash char(64) NOT NULL COMMENT '本笔哈希',
+  supersedes_entry_id bigint DEFAULT NULL COMMENT '发回重办顶替的旧笔(旧笔退出页面,链上仍在)',
+  create_by varchar(64) DEFAULT NULL COMMENT '创建者',
+  create_time datetime DEFAULT NULL COMMENT '创建时间',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_use_entry_seq (order_id, seq),
+  UNIQUE KEY uk_use_entry_point (order_id, stage, action, round_no),
+  KEY idx_use_entry_order (order_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='用密成果申请签署落笔链(只增不改)';
+
+CREATE TABLE IF NOT EXISTS t_mgis_use_claim (
+  id bigint NOT NULL COMMENT '主键',
+  claim_no varchar(64) NOT NULL COMMENT '领用清单号(QD打头,系统给号)',
+  order_id bigint NOT NULL COMMENT '核准申请单主键(一件对一条)',
+  order_no varchar(64) NOT NULL COMMENT '申请单号(自核准件带)',
+  approve_no varchar(64) NOT NULL COMMENT '批准文号(自核准件带,窗口不誊第二遍)',
+  applicant varchar(128) NOT NULL COMMENT '申请单位(自核准件带)',
+  purpose varchar(500) NOT NULL COMMENT '用途(自核准件带)',
+  line_count int NOT NULL DEFAULT 0 COMMENT '清单行数(与行表、核准件图幅行三处对账)',
+  generated_by varchar(64) NOT NULL COMMENT '生成清单经办(登录态取)',
+  generated_at datetime NOT NULL COMMENT '生成时辰(系统写死,以秒计)',
+  create_by varchar(64) DEFAULT NULL COMMENT '创建者',
+  create_time datetime DEFAULT NULL COMMENT '创建时间',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_use_claim_no (claim_no),
+  UNIQUE KEY uk_use_claim_order (order_id),
+  KEY idx_use_claim_applicant (applicant)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='用密成果领用清单(一件一条,只立不改)';
+
+CREATE TABLE IF NOT EXISTS t_mgis_use_claim_line (
+  id bigint NOT NULL COMMENT '主键',
+  claim_id bigint NOT NULL COMMENT '清单主键',
+  order_id bigint NOT NULL COMMENT '核准申请单主键',
+  row_no int NOT NULL COMMENT '行次(与申请行同序)',
+  sheet_code varchar(64) NOT NULL COMMENT '图幅代号(自申请行带)',
+  secret_level varchar(16) NOT NULL COMMENT '密级(自申请行带)',
+  map_year int NOT NULL COMMENT '出图年份(自申请行带)',
+  create_by varchar(64) DEFAULT NULL COMMENT '创建者',
+  create_time datetime DEFAULT NULL COMMENT '创建时间',
+  PRIMARY KEY (id),
+  UNIQUE KEY uk_use_claim_line_row (claim_id, row_no),
+  KEY idx_use_claim_line_claim (claim_id),
+  KEY idx_use_claim_line_order (order_id)
+) ENGINE=InnoDB DEFAULT CHARSET=utf8mb4 COLLATE=utf8mb4_0900_ai_ci COMMENT='用密成果领用清单行(只立不改)';
+
 -- 初始档案数据（在册 / 注销两种状态各一条）
 -- t_mgis_unit_doc 两条种子档案：id=0 在册、id=1 已注销（在册与注销的联动样例）。
 -- 挂用专业类别数上限取 30/120/360 项，取值达到上限时按高一档折算。
